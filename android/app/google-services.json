@@ -1,0 +1,30 @@
+{
+  "project_info": {
+    "project_number": "160631853733",
+    "firebase_url": "https://ludo-4984e-default-rtdb.europe-west1.firebasedatabase.app",
+    "project_id": "ludo-4984e",
+    "storage_bucket": "ludo-4984e.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:160631853733:android:94725d43b1f0edf285734c",
+        "android_client_info": {
+          "package_name": "site.smstudios.ludo_app"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyA2xdOCiZ9HYp-Cose1m5YMPq_kGt0fMkU"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}
