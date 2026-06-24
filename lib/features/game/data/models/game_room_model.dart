@@ -61,12 +61,16 @@ class GameRoomState {
   final int turnNumber;
   final int? diceRoll;
   final String phase;
+  // FIX: added winner field so _WinnerBanner can check it directly
+  // instead of using the fragile room.state.toString() search.
+  final String? winner;
 
   const GameRoomState({
     this.currentTurn,
     required this.turnNumber,
     this.diceRoll,
     required this.phase,
+    this.winner,
   });
 
   factory GameRoomState.fromJson(Map<dynamic, dynamic> json) {
@@ -75,6 +79,7 @@ class GameRoomState {
       turnNumber:  json['turn_number'] as int? ?? 0,
       diceRoll:    json['dice_roll'] as int?,
       phase:       json['phase'] as String? ?? 'waiting',
+      winner:      json['winner'] as String?,
     );
   }
 }

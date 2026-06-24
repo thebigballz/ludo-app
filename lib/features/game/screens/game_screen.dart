@@ -28,15 +28,13 @@ class _GameScreenState extends ConsumerState<GameScreen> {
   void initState() {
     super.initState();
     WidgetsBinding.instance.addPostFrameCallback((_) {
-      ref.read(gameProvider(widget.roomId).notifier)
-          .setConnected(true);
+      ref.read(gameProvider(widget.roomId).notifier).setConnected(true);
     });
   }
 
   @override
   void dispose() {
-    ref.read(gameProvider(widget.roomId).notifier)
-        .setConnected(false);
+    ref.read(gameProvider(widget.roomId).notifier).setConnected(false);
     super.dispose();
   }
 
@@ -68,8 +66,8 @@ class _GameScreenState extends ConsumerState<GameScreen> {
     );
   }
 
-  List<LudoPlayer> _sortedPlayers(GameRoomModel room,
-      Map<String, PawnPositions> pawns) {
+  List<LudoPlayer> _sortedPlayers(
+      GameRoomModel room, Map<String, PawnPositions> pawns) {
     final players = _buildPlayers(room, pawns);
     const colorOrder = [
       PlayerColor.red,
@@ -77,28 +75,21 @@ class _GameScreenState extends ConsumerState<GameScreen> {
       PlayerColor.yellow,
       PlayerColor.blue,
     ];
-    players.sort(
-      (a, b) => colorOrder.indexOf(a.color).compareTo(
-            colorOrder.indexOf(b.color),
-          ),
-    );
+    players.sort((a, b) =>
+        colorOrder.indexOf(a.color).compareTo(colorOrder.indexOf(b.color)));
     return players;
   }
 
-  List<LudoPlayer> _buildPlayers(GameRoomModel room,
-      Map<String, PawnPositions> pawns) {
+  List<LudoPlayer> _buildPlayers(
+      GameRoomModel room, Map<String, PawnPositions> pawns) {
     final players = <LudoPlayer>[];
 
     room.players.forEach((key, roomPlayer) {
       final userId = int.tryParse(key.replaceAll('user_', ''));
       if (userId == null) return;
 
-      final player = LudoPlayer(
-        userId: userId,
-        color:  roomPlayer.playerColor,
-      );
+      final player = LudoPlayer(userId: userId, color: roomPlayer.playerColor);
 
-      // Sync pawn positions from Firebase
       final pawnPositions = pawns[key];
       if (pawnPositions != null) {
         pawnPositions.positions.forEach((pawnId, position) {
@@ -130,186 +121,206 @@ class _GameScreenState extends ConsumerState<GameScreen> {
 
   @override
   Widget build(BuildContext context) {
-    final String roomId = widget.roomId;
-    final userId      = ref.watch(authProvider).user?.id ?? 0;
-    final roomAsync   = ref.watch(gameRoomStreamProvider(widget.roomId));
-    final stateAsync  = ref.watch(gameStateStreamProvider(widget.roomId));
-    final pawnsAsync  = ref.watch(gamePawnsStreamProvider(widget.roomId) as ProviderListenable<dynamic>);
-    final gameActions = ref.watch(gameProvider(widget.roomId));
+    final String roomId   = widget.roomId;
+    final userId          = ref.watch(authProvider).user?.id ?? 0;
+    final roomAsync       = ref.watch(gameRoomStreamProvider(widget.roomId));
+    final stateAsync      = ref.watch(gameStateStreamProvider(widget.roomId));
+    final pawnsAsync      = ref.watch(gamePawnsStreamProvider(widget.roomId) as ProviderListenable<dynamic>);
+    final gameActions     = ref.watch(gameProvider(widget.roomId));
 
+    // -------------------------------------------------------
+    // FIX: rewritten listener — see game_screen_listener.dart
+    // for a detailed explanation of every change.
+    // -------------------------------------------------------
     ref.listen(gameStateStreamProvider(widget.roomId), (prev, next) {
+      // FIX 1: compare against previous snapshot.
+      // Only act when the state has genuinely changed, not on every rebuild.
+      final prevState = prev?.value;
+      final nextState = next.value;
+      if (nextState == null) return;
+
+      // FIX 2: only fire when we just entered 'moving' phase with a fresh roll.
+      // If phase or dice_roll hasn't changed since last snapshot, do nothing.
+      final phaseChanged = prevState?.phase != nextState.phase;
+      final rollChanged  = prevState?.diceRoll != nextState.diceRoll;
+      if (!phaseChanged && !rollChanged) return;
+
+      // FIX 3: only the current turn player evaluates valid moves.
+      if (nextState.phase != 'moving') return;
+      if (nextState.diceRoll == null) return;
+      if (nextState.currentTurn != 'user_$userId') return;
+
       final room = roomAsync.value;
       if (room == null) return;
-
-      final roomState = next.value;
-      if (roomState == null) return;
-      if (roomState.phase != 'moving' || roomState.diceRoll == null) return;
-      if (roomState.currentTurn != 'user_$userId') return;
 
       final pawns   = pawnsAsync.value ?? {};
       final players = _sortedPlayers(room, pawns);
       final me      = _playerForUser(players, userId);
       if (me == null) return;
 
-      if (LudoLogic.validMoves(me, roomState.diceRoll!).isEmpty) {
-        ref.read(gameProvider(roomId).notifier).skipTurn(players);
+      if (LudoLogic.validMoves(me, nextState.diceRoll!).isEmpty) {
+        // FIX 4: use skipTurnIfNeeded which has the isSkipping guard.
+        ref.read(gameProvider(roomId).notifier).skipTurnIfNeeded(players);
       }
     });
 
-    return WillPopScope(
-        onWillPop: () async {
-          final phase = ref.read(gameStateStreamProvider(roomId)).value?.phase;
+    return PopScope(
+      // FIX: replaced deprecated WillPopScope with PopScope
+      canPop: false,
+      onPopInvoked: (didPop) async {
+        if (didPop) return;
 
-          // Allow back if game is finished or waiting
-          if (phase == 'finished' || phase == 'waiting') return true;
+        final phase =
+            ref.read(gameStateStreamProvider(roomId)).value?.phase;
+        if (phase == 'finished' || phase == 'waiting') {
+          if (context.mounted) context.go('/lobby');
+          return;
+        }
 
-          // Warn if game is active
-          final confirmed = await showDialog<bool>(
-            context: context,
-            builder: (ctx) => AlertDialog(
-              backgroundColor: AppColors.card,
-              title: const Text('Leave Game?', style: AppTextStyles.heading3),
-              content: const Text(
-                'Leaving an active game will count as a loss '
-                    'and your stake will be forfeited.',
-                style: AppTextStyles.bodySecondary,
-              ),
-              actions: [
-                TextButton(
-                  onPressed: () => Navigator.pop(ctx, false),
-                  child: const Text('Stay'),
-                ),
-                ElevatedButton(
-                  onPressed: () => Navigator.pop(ctx, true),
-                  style: ElevatedButton.styleFrom(
-                    backgroundColor: AppColors.error,
-                  ),
-                  child: const Text('Leave'),
-                ),
-              ],
+        final confirmed = await showDialog<bool>(
+          context: context,
+          builder: (ctx) => AlertDialog(
+            backgroundColor: AppColors.card,
+            title: const Text('Leave Game?', style: AppTextStyles.heading3),
+            content: const Text(
+              'Leaving an active game will count as a loss '
+                  'and your stake will be forfeited.',
+              style: AppTextStyles.bodySecondary,
             ),
-          );
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.pop(ctx, false),
+                child: const Text('Stay'),
+              ),
+              ElevatedButton(
+                onPressed: () => Navigator.pop(ctx, true),
+                style: ElevatedButton.styleFrom(
+                    backgroundColor: AppColors.error),
+                child: const Text('Leave'),
+              ),
+            ],
+          ),
+        );
 
-          return confirmed ?? false;
-        },
+        if ((confirmed ?? false) && context.mounted) {
+          context.go('/lobby');
+        }
+      },
 
       child: Scaffold(
-      backgroundColor: AppColors.background,
-      body: roomAsync.when(
-        loading: () => const Center(
-          child: CircularProgressIndicator(color: AppColors.primary),
-        ),
-        error: (e, _) => Center(child: Text('Error: $e')),
-        data: (room) {
-          if (room == null) {
-            return const Center(child: Text('Room not found'));
-          }
-
-          final roomState = stateAsync.value;
-          final pawns     = pawnsAsync.value ?? {};
-          final players   = _sortedPlayers(room, pawns);
-          final isMyTurn  = roomState?.currentTurn == 'user_$userId';
-          final phase     = roomState?.phase ?? 'waiting';
-          final diceRoll  = roomState?.diceRoll;
-
-          if (_ludoGame == null && players.isNotEmpty) {
-            _ludoGame = LudoGame(
-              roomId:        widget.roomId,
-              currentUserId: userId,
-              onPawnTapped:  _onPawnTapped,
-              initialPawns: {
-                for (final p in players) p.color: p.pawns,
-              },
-            );
-          } else if (_ludoGame != null && players.isNotEmpty) {
-            _ludoGame!.onPawnTapped = _onPawnTapped;
-            _ludoGame!.syncPlayers(players);
-
-            if (phase == 'moving' &&
-                isMyTurn &&
-                diceRoll != null) {
-              final me = players.firstWhere((p) => p.userId == userId);
-              _ludoGame!.setValidMoves(
-                LudoLogic.validMoves(me, diceRoll),
-              );
-            } else {
-              _ludoGame!.clearHighlights();
+        backgroundColor: AppColors.background,
+        body: roomAsync.when(
+          loading: () => const Center(
+            child: CircularProgressIndicator(color: AppColors.primary),
+          ),
+          error: (e, _) => Center(child: Text('Error: $e')),
+          data: (room) {
+            if (room == null) {
+              return const Center(child: Text('Room not found'));
             }
-          }
 
-          return SafeArea(
-            child: Column(
-              children: [
+            final roomState = stateAsync.value;
+            final pawns     = pawnsAsync.value ?? {};
+            final players   = _sortedPlayers(room, pawns);
+            final isMyTurn  = roomState?.currentTurn == 'user_$userId';
+            final phase     = roomState?.phase ?? 'waiting';
+            final diceRoll  = roomState?.diceRoll;
 
-                // Top bar
-                _TopBar(
-                  room:   room,
-                  onExit: () => context.go('/lobby'),
-                  onChat: () => Navigator.push(
-                    context,
-                    MaterialPageRoute(
-                      builder: (_) => ChatScreen(roomId: widget.roomId),
+            if (_ludoGame == null && players.isNotEmpty) {
+              _ludoGame = LudoGame(
+                roomId:        widget.roomId,
+                currentUserId: userId,
+                onPawnTapped:  _onPawnTapped,
+                initialPawns: {
+                  for (final p in players) p.color: p.pawns,
+                },
+              );
+            } else if (_ludoGame != null && players.isNotEmpty) {
+              _ludoGame!.onPawnTapped = _onPawnTapped;
+              _ludoGame!.syncPlayers(players);
+
+              if (phase == 'moving' && isMyTurn && diceRoll != null) {
+                final me = players.firstWhere((p) => p.userId == userId);
+                _ludoGame!.setValidMoves(LudoLogic.validMoves(me, diceRoll));
+              } else {
+                _ludoGame!.clearHighlights();
+              }
+            }
+
+            // FIX: winner check uses the actual winner field from Firebase
+            // instead of the fragile toString() search.
+            final winnerId = room.state.winner;
+            final isWinner = winnerId == 'user_$userId';
+
+            return SafeArea(
+              child: Column(
+                children: [
+                  _TopBar(
+                    room:   room,
+                    onExit: () => context.go('/lobby'),
+                    onChat: () => Navigator.push(
+                      context,
+                      MaterialPageRoute(
+                        builder: (_) =>
+                            ChatScreen(roomId: widget.roomId),
+                      ),
                     ),
                   ),
-                ),
 
-                // Player indicators
-                _PlayerIndicators(
-                  players:     players,
-                  currentTurn: roomState?.currentTurn,
-                  userId:      userId,
-                ),
+                  _PlayerIndicators(
+                    players:     players,
+                    currentTurn: roomState?.currentTurn,
+                    userId:      userId,
+                  ),
 
-                // Flame board
-                Expanded(
-                  child: Padding(
-                    padding: const EdgeInsets.all(8),
-                    child: AspectRatio(
-                      aspectRatio: 1,
-                      child: _ludoGame != null
-                          ? flame.GameWidget(game: _ludoGame!)
-                          : const Center(
-                        child: CircularProgressIndicator(
-                          color: AppColors.primary,
+                  Expanded(
+                    child: Padding(
+                      padding: const EdgeInsets.all(8),
+                      child: AspectRatio(
+                        aspectRatio: 1,
+                        child: _ludoGame != null
+                            ? flame.GameWidget(game: _ludoGame!)
+                            : const Center(
+                          child: CircularProgressIndicator(
+                            color: AppColors.primary,
+                          ),
                         ),
                       ),
                     ),
                   ),
-                ),
 
-                // Bottom controls
-                _BottomControls(
-                  isMyTurn:  isMyTurn,
-                  phase:     phase,
-                  lastRoll:  diceRoll,
-                  isRolling: gameActions.isRolling,
-                  isMoving:  gameActions.isMoving,
-                  hasValidMoves: phase == 'moving' &&
-                      isMyTurn &&
-                      diceRoll != null &&
-                      _playerForUser(players, userId) != null &&
-                      LudoLogic.validMoves(
-                        _playerForUser(players, userId)!,
-                        diceRoll,
-                      ).isNotEmpty,
-                  onRoll: () => ref
-                      .read(gameProvider(roomId).notifier)
-                      .rollDice(players),
-                ),
-
-                // Winner banner
-                if (phase == 'finished')
-                  _WinnerBanner(
-                    room:   room,
-                    userId: userId,
-                    onExit: () => context.go('/lobby'),
+                  _BottomControls(
+                    isMyTurn:  isMyTurn,
+                    phase:     phase,
+                    lastRoll:  diceRoll,
+                    isRolling: gameActions.isRolling,
+                    isMoving:  gameActions.isMoving,
+                    // FIX: also disable roll button while a skip is in progress
+                    isSkipping: gameActions.isSkipping,
+                    hasValidMoves: phase == 'moving' &&
+                        isMyTurn &&
+                        diceRoll != null &&
+                        _playerForUser(players, userId) != null &&
+                        LudoLogic.validMoves(
+                          _playerForUser(players, userId)!,
+                          diceRoll,
+                        ).isNotEmpty,
+                    onRoll: () => ref
+                        .read(gameProvider(roomId).notifier)
+                        .rollDice(players),
                   ),
-              ],
-            ),
-          );
-        },
+
+                  if (phase == 'finished')
+                    _WinnerBanner(
+                      isWinner: isWinner,
+                      onExit:   () => context.go('/lobby'),
+                    ),
+                ],
+              ),
+            );
+          },
+        ),
       ),
-    )
     );
   }
 }
@@ -321,12 +332,12 @@ class _GameScreenState extends ConsumerState<GameScreen> {
 class _TopBar extends StatelessWidget {
   final GameRoomModel room;
   final VoidCallback onExit;
-  final VoidCallback onChat;        // Add this
+  final VoidCallback onChat;
 
   const _TopBar({
     required this.room,
     required this.onExit,
-    required this.onChat,           // Add this
+    required this.onChat,
   });
 
   @override
@@ -347,7 +358,6 @@ class _TopBar extends StatelessWidget {
               textAlign: TextAlign.center,
             ),
           ),
-          // Chat button
           IconButton(
             icon:      const Icon(Icons.chat, color: AppColors.textPrimary),
             onPressed: onChat,
@@ -359,7 +369,7 @@ class _TopBar extends StatelessWidget {
               borderRadius: BorderRadius.circular(8),
             ),
             child: Text(
-              '${room.players.length}/4',
+              '${room.players.length}/2',
               style: AppTextStyles.caption,
             ),
           ),
@@ -404,7 +414,7 @@ class _PlayerIndicators extends StatelessWidget {
             duration: const Duration(milliseconds: 300),
             padding:  const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
             decoration: BoxDecoration(
-              color:        isActive
+              color: isActive
                   ? _colorForPlayer(player.color).withValues(alpha: 0.2)
                   : AppColors.card,
               borderRadius: BorderRadius.circular(20),
@@ -430,21 +440,16 @@ class _PlayerIndicators extends StatelessWidget {
                 Text(
                   isMe ? 'You' : player.color.name,
                   style: AppTextStyles.caption.copyWith(
-                    color:      isActive
+                    color: isActive
                         ? AppColors.textPrimary
                         : AppColors.textSecondary,
-                    fontWeight: isActive
-                        ? FontWeight.bold
-                        : FontWeight.normal,
+                    fontWeight:
+                    isActive ? FontWeight.bold : FontWeight.normal,
                   ),
                 ),
                 if (isActive) ...[
                   const SizedBox(width: 4),
-                  const Icon(
-                    Icons.circle,
-                    size:  6,
-                    color: AppColors.success,
-                  ),
+                  const Icon(Icons.circle, size: 6, color: AppColors.success),
                 ],
               ],
             ),
@@ -461,6 +466,7 @@ class _BottomControls extends StatelessWidget {
   final int? lastRoll;
   final bool isRolling;
   final bool isMoving;
+  final bool isSkipping;   // FIX: new param
   final bool hasValidMoves;
   final VoidCallback onRoll;
 
@@ -470,9 +476,15 @@ class _BottomControls extends StatelessWidget {
     required this.lastRoll,
     required this.isRolling,
     required this.isMoving,
+    required this.isSkipping,
     required this.hasValidMoves,
     required this.onRoll,
   });
+
+  // FIX: dice tap is disabled during a skip so the player can't
+  // accidentally roll again while the turn-advance write is in flight.
+  bool get _canRoll =>
+      isMyTurn && phase == 'rolling' && !isRolling && !isSkipping;
 
   @override
   Widget build(BuildContext context) {
@@ -482,22 +494,16 @@ class _BottomControls extends StatelessWidget {
       child: Row(
         mainAxisAlignment: MainAxisAlignment.spaceEvenly,
         children: [
-
-          // Dice display
           GestureDetector(
-            onTap: isMyTurn && phase == 'rolling' && !isRolling
-                ? onRoll
-                : null,
+            onTap: _canRoll ? onRoll : null,
             child: AnimatedContainer(
               duration: const Duration(milliseconds: 200),
               width:  72,
               height: 72,
               decoration: BoxDecoration(
-                color:        isMyTurn && phase == 'rolling'
-                    ? AppColors.primary
-                    : AppColors.card,
+                color: _canRoll ? AppColors.primary : AppColors.card,
                 borderRadius: BorderRadius.circular(16),
-                boxShadow: isMyTurn && phase == 'rolling'
+                boxShadow: _canRoll
                     ? [
                   BoxShadow(
                     color:      AppColors.primary.withValues(alpha: 0.4),
@@ -507,7 +513,7 @@ class _BottomControls extends StatelessWidget {
                 ]
                     : [],
               ),
-              child: isRolling
+              child: (isRolling || isSkipping)
                   ? const Center(
                 child: CircularProgressIndicator(
                   color:       Colors.white,
@@ -516,16 +522,13 @@ class _BottomControls extends StatelessWidget {
               )
                   : Center(
                 child: Text(
-                  lastRoll != null
-                      ? _diceEmoji(lastRoll!)
-                      : '🎲',
+                  lastRoll != null ? _diceEmoji(lastRoll!) : '🎲',
                   style: const TextStyle(fontSize: 36),
                 ),
               ),
             ),
           ),
 
-          // Status text
           Expanded(
             child: Padding(
               padding: const EdgeInsets.symmetric(horizontal: 16),
@@ -550,6 +553,7 @@ class _BottomControls extends StatelessWidget {
     if (phase == 'waiting')  return 'Waiting for players...';
     if (phase == 'finished') return 'Game over!';
     if (!isMyTurn)           return 'Waiting for opponent...';
+    if (isSkipping)          return 'No valid moves — passing turn...';
     if (phase == 'rolling')  return 'Your turn — tap dice to roll';
     if (isMoving)            return 'Moving pawn...';
     if (phase == 'moving' && !hasValidMoves) {
@@ -560,24 +564,19 @@ class _BottomControls extends StatelessWidget {
   }
 }
 
+// FIX: WinnerBanner now receives the resolved isWinner bool instead
+// of the room object, removing the fragile toString() check entirely.
 class _WinnerBanner extends StatelessWidget {
-  final GameRoomModel room;
-  final int userId;
+  final bool isWinner;
   final VoidCallback onExit;
 
   const _WinnerBanner({
-    required this.room,
-    required this.userId,
+    required this.isWinner,
     required this.onExit,
   });
 
   @override
   Widget build(BuildContext context) {
-    final winner      = room.state.phase == 'finished'
-        ? room.players['user_${room.players.keys.first}']
-        : null;
-    final isWinner    = room.state.toString().contains('user_$userId');
-
     return Container(
       width:   double.infinity,
       padding: const EdgeInsets.all(20),

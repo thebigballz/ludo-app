@@ -41,6 +41,9 @@ StreamProvider.family<Map<String, PawnPositions>, String>(
 class GameActionState {
   final bool isRolling;
   final bool isMoving;
+  // FIX: new flag — prevents the listener from calling skipTurn
+  // while a skip write is already in-flight to Firebase.
+  final bool isSkipping;
   final int? lastRoll;
   final List<int> rollHistory;
   final String? error;
@@ -48,6 +51,7 @@ class GameActionState {
   const GameActionState({
     this.isRolling   = false,
     this.isMoving    = false,
+    this.isSkipping  = false,
     this.lastRoll,
     this.rollHistory = const [],
     this.error,
@@ -56,6 +60,7 @@ class GameActionState {
   GameActionState copyWith({
     bool? isRolling,
     bool? isMoving,
+    bool? isSkipping,
     int? lastRoll,
     List<int>? rollHistory,
     String? error,
@@ -63,6 +68,7 @@ class GameActionState {
     return GameActionState(
       isRolling:   isRolling   ?? this.isRolling,
       isMoving:    isMoving    ?? this.isMoving,
+      isSkipping:  isSkipping  ?? this.isSkipping,
       lastRoll:    lastRoll    ?? this.lastRoll,
       rollHistory: rollHistory ?? this.rollHistory,
       error:       error,
@@ -91,28 +97,25 @@ class GameNotifier extends StateNotifier<GameActionState> {
     await _repository.setDiceRoll(_roomId, roll);
 
     final currentPlayer =
-        players.firstWhere((p) => p.userId == _userId);
+    players.firstWhere((p) => p.userId == _userId);
     final validMoves = LudoLogic.validMoves(currentPlayer, roll);
 
     if (validMoves.isEmpty) {
-      final currentIndex =
-          players.indexWhere((p) => p.userId == _userId);
-      final nextIndex = LudoLogic.nextPlayerIndex(
-        currentIndex,
-        players.length,
-        false,
-      );
-      await _repository.advanceTurn(_roomId, players[nextIndex].userId);
+      // FIX: when this player has no valid moves, skip immediately
+      // from rollDice rather than relying on the listener.
+      // This avoids the round-trip through Firebase that triggers
+      // the other device's listener before this one has settled.
+      await _doSkipTurn(players);
     }
 
     state = state.copyWith(isRolling: false, lastRoll: roll);
   }
 
-  Future<void> skipTurn(List<LudoPlayer> players) async {
-    if (state.isMoving || state.isRolling) return;
-
+  // FIX: renamed internal helper — only callable from within the notifier.
+  // External callers (the listener in game_screen.dart) use skipTurnIfNeeded.
+  Future<void> _doSkipTurn(List<LudoPlayer> players) async {
     final currentIndex =
-        players.indexWhere((p) => p.userId == _userId);
+    players.indexWhere((p) => p.userId == _userId);
     if (currentIndex < 0) return;
 
     final nextIndex = LudoLogic.nextPlayerIndex(
@@ -120,7 +123,28 @@ class GameNotifier extends StateNotifier<GameActionState> {
       players.length,
       false,
     );
+
     await _repository.advanceTurn(_roomId, players[nextIndex].userId);
+
+    // FIX: clear dice_roll immediately after advancing so the next
+    // device's listener sees phase='rolling' with no dice_roll value,
+    // and therefore never enters the "no valid moves → skip" branch.
+    await _repository.clearDiceRoll(_roomId);
+  }
+
+  /// Called by the game_screen listener. The guard ensures that even
+  /// if Firebase fires multiple snapshots in quick succession, only one
+  /// skip write goes through.
+  Future<void> skipTurnIfNeeded(List<LudoPlayer> players) async {
+    // FIX: bail out if we are already handling a skip, rolling, or moving.
+    if (state.isSkipping || state.isRolling || state.isMoving) return;
+
+    state = state.copyWith(isSkipping: true);
+    try {
+      await _doSkipTurn(players);
+    } finally {
+      state = state.copyWith(isSkipping: false);
+    }
   }
 
   Future<void> movePawn(
@@ -133,9 +157,9 @@ class GameNotifier extends StateNotifier<GameActionState> {
     state = state.copyWith(isMoving: true);
 
     final currentPlayer =
-        allPlayers.firstWhere((p) => p.userId == _userId);
+    allPlayers.firstWhere((p) => p.userId == _userId);
     final pawnToMove =
-        currentPlayer.pawns.firstWhere((p) => p.id == pawn.id);
+    currentPlayer.pawns.firstWhere((p) => p.id == pawn.id);
     final from = pawnToMove.position;
 
     final captured = LudoLogic.applyMove(
@@ -145,7 +169,6 @@ class GameNotifier extends StateNotifier<GameActionState> {
       allPlayers,
     );
 
-    // Update Firebase pawn position
     await _repository.movePawn(
       _roomId,
       _userId,
@@ -153,7 +176,6 @@ class GameNotifier extends StateNotifier<GameActionState> {
       pawnToMove.position,
     );
 
-    // Update captured pawns
     for (final capturedPawn in captured) {
       final owner = allPlayers.firstWhere(
             (p) => p.pawns.any(
@@ -169,7 +191,6 @@ class GameNotifier extends StateNotifier<GameActionState> {
       );
     }
 
-    // Record the move
     await _repository.recordMove(
       _roomId,
       _userId,
@@ -179,7 +200,6 @@ class GameNotifier extends StateNotifier<GameActionState> {
       pawnToMove.position,
     );
 
-    // Check for winner
     final winner = LudoLogic.checkWinner(allPlayers);
     if (winner != null) {
       await _repository.setWinner(_roomId, winner.userId);
@@ -187,7 +207,6 @@ class GameNotifier extends StateNotifier<GameActionState> {
       return;
     }
 
-    // Extra turn on 6 or capture
     final extraTurn = LudoLogic.getsExtraTurn(diceRoll, captured);
     final currentIndex =
     allPlayers.indexWhere((p) => p.userId == _userId);
@@ -199,13 +218,16 @@ class GameNotifier extends StateNotifier<GameActionState> {
 
     await _repository.advanceTurn(_roomId, allPlayers[nextIndex].userId);
 
+    // FIX: clear dice_roll after every move so the next player's device
+    // starts with a clean state and the listener never sees a stale roll.
+    await _repository.clearDiceRoll(_roomId);
+
     state = state.copyWith(
       isMoving:    false,
       rollHistory: extraTurn ? state.rollHistory : [],
     );
   }
 
-  // Presence
   Future<void> setConnected(bool connected) async {
     await _repository.setPlayerConnected(_roomId, _userId, connected);
   }

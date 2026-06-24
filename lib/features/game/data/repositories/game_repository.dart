@@ -14,14 +14,11 @@ class GameRepository {
   Stream<GameRoomModel?> watchRoom(String roomId) {
     return _roomRef(roomId).onValue.map((event) {
       if (!event.snapshot.exists) return null;
-
       final data = event.snapshot.value;
       if (data == null || data is! Map) return null;
-
       try {
         return GameRoomModel.fromJson(data as Map<dynamic, dynamic>);
       } catch (e) {
-        print('Error parsing room: $e');
         return null;
       }
     });
@@ -30,14 +27,11 @@ class GameRepository {
   Stream<GameRoomState?> watchState(String roomId) {
     return _roomRef(roomId).child('state').onValue.map((event) {
       if (!event.snapshot.exists) return null;
-
       final data = event.snapshot.value;
       if (data == null || data is! Map) return null;
-
       try {
         return GameRoomState.fromJson(data as Map<dynamic, dynamic>);
       } catch (e) {
-        print('Error parsing state: $e');
         return null;
       }
     });
@@ -46,10 +40,8 @@ class GameRepository {
   Stream<Map<String, PawnPositions>> watchPawns(String roomId) {
     return _roomRef(roomId).child('pawns').onValue.map((event) {
       if (!event.snapshot.exists) return {};
-
       final raw = event.snapshot.value;
       if (raw == null || raw is! Map) return {};
-
       final result = <String, PawnPositions>{};
       try {
         (raw as Map<dynamic, dynamic>).forEach((key, value) {
@@ -57,15 +49,13 @@ class GameRepository {
             value is Map ? value as Map<dynamic, dynamic> : null,
           );
         });
-      } catch (e) {
-        print('Error parsing pawns: $e');
-      }
+      } catch (_) {}
       return result;
     });
   }
 
   // -------------------------------------------------------
-  // Writes (client side — will move to Cloud Functions later)
+  // Writes
   // -------------------------------------------------------
 
   Future<void> setDiceRoll(String roomId, int roll) async {
@@ -73,6 +63,15 @@ class GameRepository {
       'dice_roll':    roll,
       'phase':        'moving',
       'roll_request': false,
+    });
+  }
+
+  // FIX: new method — atomically resets dice_roll to null and
+  // sets phase back to 'rolling' so no listener sees a stale roll.
+  Future<void> clearDiceRoll(String roomId) async {
+    await _roomRef(roomId).child('state').update({
+      'dice_roll': null,
+      'phase':     'rolling',
     });
   }
 
@@ -105,14 +104,11 @@ class GameRepository {
     });
   }
 
-  Future<void> advanceTurn(
-      String roomId,
-      int nextUserId,
-      ) async {
+  Future<void> advanceTurn(String roomId, int nextUserId) async {
     await _roomRef(roomId).child('state').update({
       'current_turn': 'user_$nextUserId',
-      'dice_roll':    null,
-      'phase':        'rolling',
+      // FIX: do NOT set phase or dice_roll here — clearDiceRoll handles
+      // that as a separate step so callers can control the ordering.
     });
   }
 

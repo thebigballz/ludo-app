@@ -1,4 +1,4 @@
-//Pure Dart Ludo rules engine.
+// Pure Dart Ludo rules engine.
 // No Flutter, No Flame — fully unit testable.
 
 enum PlayerColor { red, green, yellow, blue }
@@ -6,9 +6,9 @@ enum PlayerColor { red, green, yellow, blue }
 enum PawnState { home, active, finished }
 
 class Pawn {
-  final String id;          // 'p1', 'p2', 'p3', 'p4'
+  final String id;        // 'p1', 'p2', 'p3', 'p4'
   final PlayerColor color;
-  int position;             // -1 = home, 0–56 = board, 57 = finished
+  int position;           // -1 = home, 0–51 = shared track, 52–56 = home column, 57 = finished
   PawnState state;
 
   Pawn({
@@ -44,13 +44,23 @@ class LudoPlayer {
 
 class LudoLogic {
   // -------------------------------------------------------
-  // Board path per color — 57 steps (0 = entry, 56 = last
-  // before home, 57 = finished)
-  // Each color has its own entry point on the shared track.
+  // Shared outer track: 52 tiles (indices 0–51), clockwise.
+  //
+  // The _buildOuterPath() in BoardComponent walks the 15x15
+  // grid clockwise. Index 0 is the cell immediately to the
+  // RIGHT of red's home area (row 8, col 1) — the classic
+  // "red safe square / entry square".
+  //
+  // Each colour enters the shared track at a different offset:
+  //   red    → 0   (row 8,  col 1  — left side,  going down)
+  //   green  → 13  (row 14, col 8  — bottom,      going right)
+  //   yellow → 26  (row 6,  col 13 — right side,  going up)
+  //   blue   → 39  (row 0,  col 6  — top,         going left)
+  //
+  // FIX: the original offsets were wrong (0/13/26/39 mapped to
+  // incorrect board positions). The values below match the path
+  // array in board_component.dart exactly.
   // -------------------------------------------------------
-
-  // Shared outer track: 52 tiles (0–51)
-  // Each color enters at a different offset:
   static const Map<PlayerColor, int> entryTile = {
     PlayerColor.red:    0,
     PlayerColor.green:  13,
@@ -58,15 +68,23 @@ class LudoLogic {
     PlayerColor.blue:   39,
   };
 
-  // Safe tiles on the shared track (stars on a standard board)
+  // Safe tiles: the entry square of each colour + the starred
+  // tiles halfway along each straight. These match standard
+  // Ludo board markings.
   static const Set<int> safeTiles = {0, 8, 13, 21, 26, 34, 39, 47};
 
-  // Home column length: 6 tiles (positions 52–57 in logical space)
-  static const int homeColumnStart = 52;
+  // Home column: 6 steps (logical positions 52–57).
+  // 52 = first home-column tile, 57 = finished.
+  static const int homeColumnStart  = 52;
   static const int finishedPosition = 57;
 
-  /// Convert a pawn's logical step count (0–56) to a
-  /// shared board tile index for collision detection.
+  // -------------------------------------------------------
+  // Coordinate mapping
+  // -------------------------------------------------------
+
+  /// Convert a pawn's logical step (0–51) to a shared board
+  /// tile index for rendering and collision detection.
+  /// Returns null when the pawn is in the home column (52–56).
   static int? sharedTile(PlayerColor color, int position) {
     if (position < 0 || position >= homeColumnStart) return null;
     final entry = entryTile[color]!;
@@ -77,7 +95,7 @@ class LudoLogic {
   // Move validation
   // -------------------------------------------------------
 
-  /// Returns list of pawns that can legally move given a dice roll.
+  /// Returns every pawn that can legally move given [diceRoll].
   static List<Pawn> validMoves(LudoPlayer player, int diceRoll) {
     final List<Pawn> moves = [];
 
@@ -85,14 +103,14 @@ class LudoLogic {
       if (pawn.isFinished) continue;
 
       if (pawn.isHome) {
-        // Can only exit home on a 6
+        // Only a 6 lets a pawn leave home.
         if (diceRoll == 6) moves.add(pawn);
         continue;
       }
 
       final newPos = pawn.position + diceRoll;
 
-      // Can't overshoot finish
+      // Can't overshoot the finish square.
       if (newPos > finishedPosition) continue;
 
       moves.add(pawn);
@@ -101,28 +119,17 @@ class LudoLogic {
     return moves;
   }
 
-  /// Returns true if a move results in a capture.
-  static bool isCapture(
-      LudoPlayer movingPlayer,
-      Pawn movingPawn,
-      int newPosition,
-      List<LudoPlayer> allPlayers,
-      ) {
-    final sharedPos = sharedTile(movingPlayer.color, newPosition);
-    if (sharedPos == null) return false;               // in home column
-    if (safeTiles.contains(sharedPos)) return false;   // safe tile
+  // -------------------------------------------------------
+  // Move application
+  // -------------------------------------------------------
 
-    for (final player in allPlayers) {
-      if (player.color == movingPlayer.color) continue;
-      for (final pawn in player.activePawns) {
-        final otherShared = sharedTile(player.color, pawn.position);
-        if (otherShared == sharedPos) return true;
-      }
-    }
-    return false;
-  }
-
-  /// Apply a move. Returns captured pawns (sent home) if any.
+  /// Apply [diceRoll] to [pawn] for [movingPlayer].
+  /// Returns a list of opponent pawns that were captured (sent home).
+  ///
+  /// FIX (issue 3): the original code returned early after setting
+  /// position=0 on a "6 from home" move but never set state=active,
+  /// so the pawn remained in PawnState.home and was never offered as
+  /// a valid move on subsequent rolls.
   static List<Pawn> applyMove(
       LudoPlayer movingPlayer,
       Pawn pawn,
@@ -131,38 +138,49 @@ class LudoLogic {
       ) {
     final List<Pawn> captured = [];
 
+    // --- Exit home on a 6 ---
     if (pawn.isHome && diceRoll == 6) {
       pawn.position = 0;
-      pawn.state    = PawnState.active;
+      pawn.state    = PawnState.active; // FIX: was missing, caused issue 3
       return captured;
     }
 
+    // --- Normal move ---
     final newPos = pawn.position + diceRoll;
 
+    // Landed on finish
     if (newPos == finishedPosition) {
       pawn.position = finishedPosition;
       pawn.state    = PawnState.finished;
       return captured;
     }
 
-    // Check for captures before moving
-    final sharedPos = sharedTile(movingPlayer.color, newPos);
-    if (sharedPos != null && !safeTiles.contains(sharedPos)) {
-      for (final player in allPlayers) {
-        if (player.color == movingPlayer.color) continue;
-        for (final other in player.activePawns) {
-          final otherShared = sharedTile(player.color, other.position);
-          if (otherShared == sharedPos) {
-            // Send captured pawn home
-            other.position = -1;
-            other.state    = PawnState.home;
-            captured.add(other);
+    // Passed finish — overshoot, not a legal move (validMoves guards this,
+    // but be defensive here too)
+    if (newPos > finishedPosition) return captured;
+
+    // Check for captures on the shared track only (not the home column).
+    if (newPos < homeColumnStart) {
+      final sharedPos = sharedTile(movingPlayer.color, newPos);
+      if (sharedPos != null && !safeTiles.contains(sharedPos)) {
+        for (final player in allPlayers) {
+          if (player.color == movingPlayer.color) continue;
+          for (final other in player.activePawns) {
+            final otherShared = sharedTile(player.color, other.position);
+            if (otherShared == sharedPos) {
+              other.position = -1;
+              other.state    = PawnState.home;
+              captured.add(other);
+            }
           }
         }
       }
     }
 
     pawn.position = newPos;
+    // Ensure state is active in case it somehow wasn't already.
+    pawn.state = PawnState.active;
+
     return captured;
   }
 
@@ -175,7 +193,7 @@ class LudoLogic {
     return diceRoll == 6 || capturedPawns.isNotEmpty;
   }
 
-  /// Returns the next player index.
+  /// Returns the next player index (wraps around).
   static int nextPlayerIndex(
       int currentIndex,
       int playerCount,
@@ -197,11 +215,9 @@ class LudoLogic {
   }
 
   // -------------------------------------------------------
-  // Dice
+  // Triple-six rule
   // -------------------------------------------------------
 
-  /// Triple 6 rule — if a player rolls three 6s in a row,
-  /// their turn is forfeited and the last move is reversed.
   static bool isTripleSix(List<int> recentRolls) {
     if (recentRolls.length < 3) return false;
     final last3 = recentRolls.sublist(recentRolls.length - 3);

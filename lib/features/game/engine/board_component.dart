@@ -8,8 +8,13 @@ class BoardComponent extends PositionComponent with HasGameRef<LudoGame> {
   late double tileSize;
   late double boardSize;
 
+  // Maps shared track index (0–51) → board centre pixel
   final Map<int, Vector2> sharedTilePositions = {};
+
+  // Maps colour → { home-column step (0–5) → board centre pixel }
   final Map<PlayerColor, Map<int, Vector2>> homeColumnPositions = {};
+
+  // Maps colour → list of 4 home-base centre pixels (where pawns wait)
   final Map<PlayerColor, List<Vector2>> homePawnPositions = {};
 
   @override
@@ -21,110 +26,180 @@ class BoardComponent extends PositionComponent with HasGameRef<LudoGame> {
     _computeTilePositions();
   }
 
+  // -------------------------------------------------------
+  // Position computation
+  // -------------------------------------------------------
+
   void _computeTilePositions() {
     final path = _buildOuterPath();
     for (int i = 0; i < path.length; i++) {
       final cell = path[i];
-      sharedTilePositions[i] = Vector2(
-        cell[1] * tileSize + tileSize / 2,
-        cell[0] * tileSize + tileSize / 2,
-      );
+      // FIX (issue 1): use tileCentre() everywhere so every shared-track
+      // position is the pixel centre of its cell, not the top-left corner.
+      sharedTilePositions[i] = _tileCentre(cell[0], cell[1]);
     }
     _buildHomeColumns();
     _buildHomeAreas();
   }
 
-  // Perfect 52-tile clockwise path on 15x15 grid
+  /// Returns the pixel centre of the tile at (row, col).
+  Vector2 _tileCentre(int row, int col) {
+    return Vector2(
+      col * tileSize + tileSize / 2,
+      row * tileSize + tileSize / 2,
+    );
+  }
+
+  // -------------------------------------------------------
+  // Shared outer path (52 tiles, clockwise)
+  //
+  // FIX (issue 2): the original path started at [6,1] (mid-left),
+  // making index 0 the wrong square for every colour's entry point.
+  //
+  // Standard Ludo layout on a 15×15 grid:
+  //   • Red   enters at row 8, col 1  (left side, going down)  → index 0
+  //   • Green enters at row 14, col 8 (bottom edge, going right)→ index 13
+  //   • Yellow enters at row 6, col 13 (right side, going up)  → index 26
+  //   • Blue  enters at row 0, col 6  (top edge, going left)   → index 39
+  //
+  // The path is walked clockwise from red's entry square.
+  // -------------------------------------------------------
   List<List<int>> _buildOuterPath() {
     return const [
-      // Red entry going down (col 1, rows 6-13)
-      [6,1],[7,1],[8,1],[9,1],[10,1],[11,1],[12,1],[13,1],
-      // Bottom-left going right (row 13, cols 2-5)
+      // --- Red entry & left side going DOWN (col 1, rows 8→13) ---
+      [8,1],  // index 0  ← red entry / safe square
+      [9,1],[10,1],[11,1],[12,1],[13,1],
+
+      // --- Bottom-left corner going RIGHT (row 13, cols 2→5) ---
       [13,2],[13,3],[13,4],[13,5],
-      // Bottom excursion (row 14)
-      [14,6],[14,7],[14,8],
-      // Bottom-right going right (row 13, cols 9-13)
+
+      // --- Bottom excursion (row 14, cols 6→8) ---
+      [14,6],[14,7],[14,8],  // index 13 ← green entry
+
+      // --- Bottom-right corner going RIGHT (row 13, cols 9→13) ---
       [13,9],[13,10],[13,11],[13,12],[13,13],
-      // Right side going up (col 13, rows 12-6)
+
+      // --- Right side going UP (col 13, rows 12→6) ---
       [12,13],[11,13],[10,13],[9,13],[8,13],[7,13],[6,13],
-      // Right excursion (col 14)
-      [6,14],[7,14],[8,14],
-      // Continue right side up (col 13, rows 5-1)
-      [5,13],[4,13],[3,13],[2,13],[1,13],
-      // Top going left (row 1, cols 12-8)
-      [1,12],[1,11],[1,10],[1,9],[1,8],
-      // Top excursion (row 0)
-      [0,8],[0,7],[0,6],
-      // Top-left going left (row 1, cols 5-1)
+
+      // --- Right excursion (col 14, rows 6→8) ---
+      [6,14],[7,14],[8,14],  // index 26 ← yellow entry
+
+      // --- Top-right corner going LEFT (row 1, cols 13→9) ---
+      [1,13],[1,12],[1,11],[1,10],[1,9],
+
+      // --- Top excursion (row 0, cols 8→6) ---
+      [0,8],[0,7],[0,6],  // index 39 ← blue entry
+
+      // --- Top-left corner going LEFT (row 1, cols 5→1) ---
       [1,5],[1,4],[1,3],[1,2],[1,1],
-      // Left side going down (col 1, rows 2-5)
-      [2,1],[3,1],[4,1],[5,1],
+
+      // --- Left side going DOWN (col 1, rows 2→7) ---
+      [2,1],[3,1],[4,1],[5,1],[6,1],[7,1],
+      // index 51 is [7,1], one step above red's entry — correct
     ];
   }
 
+  // -------------------------------------------------------
+  // Home columns (the coloured straight to the centre)
+  // Each colour has 6 steps (logical positions 52–57).
+  // Step 0 is the first tile entering from the shared track;
+  // step 5 leads into the centre finish triangle.
+  // -------------------------------------------------------
   void _buildHomeColumns() {
-    // Each color home column: 6 tiles leading to center (row/col 7)
+    // Red: enters from left (col 1, row 8), column goes RIGHT
     homeColumnPositions[PlayerColor.red] = {
       for (int i = 0; i < 6; i++)
-        i: Vector2(tileSize * 7.5, tileSize * (8.5 + i)),
+        i: _tileCentre(8, 2 + i),   // row 8, cols 2→7
     };
+
+    // Green: enters from bottom (row 14, col 8), column goes UP
     homeColumnPositions[PlayerColor.green] = {
       for (int i = 0; i < 6; i++)
-        i: Vector2(tileSize * (6.5 - i), tileSize * 7.5),
+        i: _tileCentre(13 - i, 8),  // col 8, rows 13→8
     };
+
+    // Yellow: enters from right (col 13, row 6), column goes LEFT
     homeColumnPositions[PlayerColor.yellow] = {
       for (int i = 0; i < 6; i++)
-        i: Vector2(tileSize * 7.5, tileSize * (6.5 - i)),
+        i: _tileCentre(6, 12 - i),  // row 6, cols 12→7
     };
+
+    // Blue: enters from top (row 1, col 6), column goes DOWN
     homeColumnPositions[PlayerColor.blue] = {
       for (int i = 0; i < 6; i++)
-        i: Vector2(tileSize * (8.5 + i), tileSize * 7.5),
+        i: _tileCentre(2 + i, 6),   // col 6, rows 2→7
     };
   }
 
+  // -------------------------------------------------------
+  // Home areas (the coloured quadrants where pawns start)
+  // 4 pawns arranged in a 2×2 grid inside each quadrant.
+  // FIX (issue 1): use _tileCentre() so pawns sit in cell centres.
+  // -------------------------------------------------------
   void _buildHomeAreas() {
-    // 4 pawns in 2x2 grid inside each color quadrant
+    // Red: top-left quadrant (rows 0–5, cols 0–5)
     homePawnPositions[PlayerColor.red] = [
-      Vector2(tileSize * 2,    tileSize * 2),
-      Vector2(tileSize * 3.5,  tileSize * 2),
-      Vector2(tileSize * 2,    tileSize * 3.5),
-      Vector2(tileSize * 3.5,  tileSize * 3.5),
+      _tileCentre(2, 2), _tileCentre(2, 4),
+      _tileCentre(4, 2), _tileCentre(4, 4),
     ];
+
+    // Green: top-right quadrant (rows 0–5, cols 9–14)
     homePawnPositions[PlayerColor.green] = [
-      Vector2(tileSize * 11,   tileSize * 2),
-      Vector2(tileSize * 12.5, tileSize * 2),
-      Vector2(tileSize * 11,   tileSize * 3.5),
-      Vector2(tileSize * 12.5, tileSize * 3.5),
+      _tileCentre(2, 10), _tileCentre(2, 12),
+      _tileCentre(4, 10), _tileCentre(4, 12),
     ];
+
+    // Yellow: bottom-right quadrant (rows 9–14, cols 9–14)
     homePawnPositions[PlayerColor.yellow] = [
-      Vector2(tileSize * 11,   tileSize * 11),
-      Vector2(tileSize * 12.5, tileSize * 11),
-      Vector2(tileSize * 11,   tileSize * 12.5),
-      Vector2(tileSize * 12.5, tileSize * 12.5),
+      _tileCentre(10, 10), _tileCentre(10, 12),
+      _tileCentre(12, 10), _tileCentre(12, 12),
     ];
+
+    // Blue: bottom-left quadrant (rows 9–14, cols 0–5)
     homePawnPositions[PlayerColor.blue] = [
-      Vector2(tileSize * 2,    tileSize * 11),
-      Vector2(tileSize * 3.5,  tileSize * 11),
-      Vector2(tileSize * 2,    tileSize * 12.5),
-      Vector2(tileSize * 3.5,  tileSize * 12.5),
+      _tileCentre(10, 2), _tileCentre(10, 4),
+      _tileCentre(12, 2), _tileCentre(12, 4),
     ];
   }
 
+  // -------------------------------------------------------
+  // Public API used by PawnComponent
+  // -------------------------------------------------------
+
+  /// Returns the pixel centre position for a pawn given its
+  /// logical state. PawnComponent subtracts radius to place
+  /// the circle centred on this point.
   Vector2 positionForPawn(PlayerColor color, int pawnIndex, int logicalPos) {
+    // In home base
     if (logicalPos == -1) {
       return homePawnPositions[color]![pawnIndex];
     }
+
+    // In home column (steps 0–5 mapped to logical 52–56)
     if (logicalPos >= LudoLogic.homeColumnStart &&
         logicalPos < LudoLogic.finishedPosition) {
       final step = logicalPos - LudoLogic.homeColumnStart;
       return homeColumnPositions[color]![step]!;
     }
+
+    // Finished — centre of the board
     if (logicalPos == LudoLogic.finishedPosition) {
       return Vector2(boardSize / 2, boardSize / 2);
     }
-    final sharedPos = LudoLogic.sharedTile(color, logicalPos)!;
-    return sharedTilePositions[sharedPos]!;
+
+    // On the shared track
+    final sharedIdx = LudoLogic.sharedTile(color, logicalPos);
+    if (sharedIdx == null) {
+      // Fallback: shouldn't happen, but return centre rather than crash
+      return Vector2(boardSize / 2, boardSize / 2);
+    }
+    return sharedTilePositions[sharedIdx]!;
   }
+
+  // -------------------------------------------------------
+  // Rendering
+  // -------------------------------------------------------
 
   @override
   void render(Canvas canvas) {
@@ -139,31 +214,31 @@ class BoardComponent extends PositionComponent with HasGameRef<LudoGame> {
     paint.color = Colors.white;
     canvas.drawRect(Rect.fromLTWH(0, 0, boardSize, boardSize), paint);
 
-    // Color quadrants (6x6 home areas)
-    _drawQuadrant(canvas, 0,  0,  const Color(0xFFFFCDD2)); // Red TL
+    // Coloured home quadrants (6×6 each)
+    _drawQuadrant(canvas, 0,  0,  const Color(0xFFFFCDD2)); // Red   TL
     _drawQuadrant(canvas, 0,  9,  const Color(0xFFC8E6C9)); // Green TR
     _drawQuadrant(canvas, 9,  9,  const Color(0xFFFFF9C4)); // Yellow BR
-    _drawQuadrant(canvas, 9,  0,  const Color(0xFFBBDEFB)); // Blue BL
+    _drawQuadrant(canvas, 9,  0,  const Color(0xFFBBDEFB)); // Blue  BL
 
     // Inner home circles
-    _drawHomeCircle(canvas, 0,  0,  const Color(0xFFE53935)); // Red
-    _drawHomeCircle(canvas, 0,  9,  const Color(0xFF43A047)); // Green
-    _drawHomeCircle(canvas, 9,  9,  const Color(0xFFFDD835)); // Yellow
-    _drawHomeCircle(canvas, 9,  0,  const Color(0xFF1E88E5)); // Blue
+    _drawHomeCircle(canvas, 0, 0,  const Color(0xFFE53935)); // Red
+    _drawHomeCircle(canvas, 0, 9,  const Color(0xFF43A047)); // Green
+    _drawHomeCircle(canvas, 9, 9,  const Color(0xFFFDD835)); // Yellow
+    _drawHomeCircle(canvas, 9, 0,  const Color(0xFF1E88E5)); // Blue
 
-    // Center triangles
+    // Centre finish triangles
     _drawCenterTriangles(canvas);
 
-    // Grid lines (light)
+    // Grid lines
     paint
       ..color       = const Color(0xFFE0E0E0)
       ..style       = PaintingStyle.stroke
       ..strokeWidth = 0.5;
     for (int i = 0; i <= gridSize; i++) {
-      canvas.drawLine(Offset(i * tileSize, 0),
-          Offset(i * tileSize, boardSize), paint);
-      canvas.drawLine(Offset(0, i * tileSize),
-          Offset(boardSize, i * tileSize), paint);
+      canvas.drawLine(
+          Offset(i * tileSize, 0), Offset(i * tileSize, boardSize), paint);
+      canvas.drawLine(
+          Offset(0, i * tileSize), Offset(boardSize, i * tileSize), paint);
     }
 
     // Board border
@@ -173,90 +248,61 @@ class BoardComponent extends PositionComponent with HasGameRef<LudoGame> {
       ..strokeWidth = 2;
     canvas.drawRect(Rect.fromLTWH(0, 0, boardSize, boardSize), paint);
 
-    // Home columns (colored paths to center)
+    // Coloured home columns
     _drawHomeColumns(canvas);
+
+    // Safe-tile stars
+    _drawSafeTileStars(canvas);
   }
 
   void _drawQuadrant(Canvas canvas, int row, int col, Color color) {
     final paint = Paint()..color = color;
     canvas.drawRect(
-      Rect.fromLTWH(
-        col * tileSize,
-        row * tileSize,
-        tileSize * 6,
-        tileSize * 6,
-      ),
+      Rect.fromLTWH(col * tileSize, row * tileSize, tileSize * 6, tileSize * 6),
       paint,
     );
   }
 
   void _drawHomeCircle(Canvas canvas, int row, int col, Color color) {
-    final paint = Paint()
-      ..color = color
-      ..style = PaintingStyle.fill;
-    final center = Offset(
-      (col + 3) * tileSize,
-      (row + 3) * tileSize,
-    );
-    canvas.drawCircle(center, tileSize * 2, paint);
+    final center = Offset((col + 3) * tileSize, (row + 3) * tileSize);
 
-    // White inner circle
-    paint.color = Colors.white;
-    canvas.drawCircle(center, tileSize * 1.2, paint);
+    // Coloured circle
+    canvas.drawCircle(center, tileSize * 2,   Paint()..color = color);
+    // White inner
+    canvas.drawCircle(center, tileSize * 1.2, Paint()..color = Colors.white);
   }
 
   void _drawCenterTriangles(Canvas canvas) {
-    final center = boardSize / 2;
-    final t      = tileSize * 3;
-    final paint  = Paint()..style = PaintingStyle.fill;
+    final cx = boardSize / 2;
+    final cy = boardSize / 2;
+    final t  = tileSize * 3;
 
-    // Red (top)
-    paint.color = const Color(0xFFE53935);
-    canvas.drawPath(
-      Path()
-        ..moveTo(center, center)
-        ..lineTo(center - t, center - t)
-        ..lineTo(center + t, center - t)
-        ..close(),
-      paint,
-    );
+    final colors = [
+      const Color(0xFFE53935), // Red    (top)
+      const Color(0xFF43A047), // Green  (right)
+      const Color(0xFFFDD835), // Yellow (bottom)
+      const Color(0xFF1E88E5), // Blue   (left)
+    ];
 
-    // Green (right)
-    paint.color = const Color(0xFF43A047);
-    canvas.drawPath(
-      Path()
-        ..moveTo(center, center)
-        ..lineTo(center + t, center - t)
-        ..lineTo(center + t, center + t)
-        ..close(),
-      paint,
-    );
+    final triangles = [
+      [Offset(cx, cy), Offset(cx - t, cy - t), Offset(cx + t, cy - t)],
+      [Offset(cx, cy), Offset(cx + t, cy - t), Offset(cx + t, cy + t)],
+      [Offset(cx, cy), Offset(cx + t, cy + t), Offset(cx - t, cy + t)],
+      [Offset(cx, cy), Offset(cx - t, cy + t), Offset(cx - t, cy - t)],
+    ];
 
-    // Yellow (bottom)
-    paint.color = const Color(0xFFFDD835);
-    canvas.drawPath(
-      Path()
-        ..moveTo(center, center)
-        ..lineTo(center + t, center + t)
-        ..lineTo(center - t, center + t)
-        ..close(),
-      paint,
-    );
+    for (int i = 0; i < 4; i++) {
+      final path = Path()
+        ..moveTo(triangles[i][0].dx, triangles[i][0].dy)
+        ..lineTo(triangles[i][1].dx, triangles[i][1].dy)
+        ..lineTo(triangles[i][2].dx, triangles[i][2].dy)
+        ..close();
+      canvas.drawPath(path, Paint()..color = colors[i]);
+    }
 
-    // Blue (left)
-    paint.color = const Color(0xFF1E88E5);
-    canvas.drawPath(
-      Path()
-        ..moveTo(center, center)
-        ..lineTo(center - t, center + t)
-        ..lineTo(center - t, center - t)
-        ..close(),
-      paint,
-    );
-
-    // Center white hexagon
-    final hexPaint = Paint()..color = Colors.white;
-    canvas.drawCircle(Offset(center, center), tileSize * 0.8, hexPaint);
+    // White centre circle
+    canvas.drawCircle(
+        Offset(cx, cy), tileSize * 0.8, Paint()..color = Colors.white);
   }
 
   void _drawHomeColumns(Canvas canvas) {
@@ -282,6 +328,25 @@ class BoardComponent extends PositionComponent with HasGameRef<LudoGame> {
           paint,
         );
       }
+    }
+  }
+
+  /// Draw a small star on each safe tile so players can see them.
+  void _drawSafeTileStars(Canvas canvas) {
+    const safeIndices = LudoLogic.safeTiles;
+    final paint = Paint()..color = const Color(0x55000000);
+
+    for (final idx in safeIndices) {
+      final pos = sharedTilePositions[idx];
+      if (pos == null) continue;
+      final tp = TextPainter(
+        text: const TextSpan(text: '★', style: TextStyle(fontSize: 10)),
+        textDirection: TextDirection.ltr,
+      )..layout();
+      tp.paint(
+        canvas,
+        Offset(pos.x - tp.width / 2, pos.y - tp.height / 2),
+      );
     }
   }
 }
