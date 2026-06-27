@@ -65,40 +65,48 @@ class BoardComponent extends PositionComponent with HasGameRef<LudoGame> {
   // The path is walked clockwise from red's entry square.
   // -------------------------------------------------------
   List<List<int>> _buildOuterPath() {
-    return const [
-      // --- Red entry & left side going DOWN (col 1, rows 8→13) ---
-      [8,1],  // index 0  ← red entry / safe square
-      [9,1],[10,1],[11,1],[12,1],[13,1],
+  return const [
+    // --- Red Entry & Left Arm Top going RIGHT (row 6, cols 1→6) ---
+    [6,1],  // Index 0  ← TRUE Red Entry
+    [6,2], [6,3], [6,4], [6,5],
 
-      // --- Bottom-left corner going RIGHT (row 13, cols 2→5) ---
-      [13,2],[13,3],[13,4],[13,5],
+    // --- Green Arm Left going UP (cols 6, rows 5→0) ---
+    [5,6], [4,6], [3,6], [2,6], [1,6], [0,6],
+    
+    // --- Top Edge Cross (row 0, col 7) ---
+    [0,7],
 
-      // --- Bottom excursion (row 14, cols 6→8) ---
-      [14,6],[14,7],[14,8],  // index 13 ← green entry
+    // --- Green Arm Right going DOWN (col 8, rows 0→5) ---
+    [0,8], // Index 13 ← TRUE Green Entry
+    [1,8], [2,8], [3,8], [4,8], [5,8],
 
-      // --- Bottom-right corner going RIGHT (row 13, cols 9→13) ---
-      [13,9],[13,10],[13,11],[13,12],[13,13],
+    // --- Yellow Arm Top going RIGHT (row 6, cols 9→14) ---
+    [6,9], [6,10], [6,11], [6,12], [6,13], [6,14],
 
-      // --- Right side going UP (col 13, rows 12→6) ---
-      [12,13],[11,13],[10,13],[9,13],[8,13],[7,13],[6,13],
+    // --- Right Edge Cross (row 7, col 14) ---
+    [7,14],
 
-      // --- Right excursion (col 14, rows 6→8) ---
-      [6,14],[7,14],[8,14],  // index 26 ← yellow entry
+    // --- Yellow Arm Bottom going LEFT (row 8, cols 14→9) ---
+    [8,14], // Index 26 ← TRUE Yellow Entry
+    [8,13], [8,12], [8,11], [8,10], [8,9],
 
-      // --- Top-right corner going LEFT (row 1, cols 13→9) ---
-      [1,13],[1,12],[1,11],[1,10],[1,9],
+    // --- Blue Arm Right going DOWN (col 8, rows 9→14) ---
+    [9,8], [10,8], [11,8], [12,8], [13,8], [14,8],
 
-      // --- Top excursion (row 0, cols 8→6) ---
-      [0,8],[0,7],[0,6],  // index 39 ← blue entry
+    // --- Bottom Edge Cross (row 14, col 7) ---
+    [14,7],
 
-      // --- Top-left corner going LEFT (row 1, cols 5→1) ---
-      [1,5],[1,4],[1,3],[1,2],[1,1],
+    // --- Blue Arm Left going UP (col 6, rows 14→9) ---
+    [14,6], // Index 39 ← TRUE Blue Entry
+    [13,6], [12,6], [11,6], [10,6], [9,6],
 
-      // --- Left side going DOWN (col 1, rows 2→7) ---
-      [2,1],[3,1],[4,1],[5,1],[6,1],[7,1],
-      // index 51 is [7,1], one step above red's entry — correct
-    ];
-  }
+    // --- Red Arm Bottom going LEFT (row 8, cols 5→0) ---
+    [8,5], [8,4], [8,3], [8,2], [8,1], [8,0],
+
+    // --- Left Edge Cross (row 7, col 0) ---
+    [7,0],
+  ];
+}
 
   // -------------------------------------------------------
   // Home columns (the coloured straight to the centre)
@@ -107,30 +115,26 @@ class BoardComponent extends PositionComponent with HasGameRef<LudoGame> {
   // step 5 leads into the centre finish triangle.
   // -------------------------------------------------------
   void _buildHomeColumns() {
-    // Red: enters from left (col 1, row 8), column goes RIGHT
-    homeColumnPositions[PlayerColor.red] = {
-      for (int i = 0; i < 6; i++)
-        i: _tileCentre(8, 2 + i),   // row 8, cols 2→7
-    };
+  // Red: enters from left edge row 7, moves RIGHT into center
+  homeColumnPositions[PlayerColor.red] = {
+    for (int i = 0; i < 6; i++) i: _tileCentre(7, 1 + i), // cols 1→6
+  };
 
-    // Green: enters from bottom (row 14, col 8), column goes UP
-    homeColumnPositions[PlayerColor.green] = {
-      for (int i = 0; i < 6; i++)
-        i: _tileCentre(13 - i, 8),  // col 8, rows 13→8
-    };
+  // Green: enters from top edge col 7, moves DOWN into center
+  homeColumnPositions[PlayerColor.green] = {
+    for (int i = 0; i < 6; i++) i: _tileCentre(1 + i, 7), // rows 1→6
+  };
 
-    // Yellow: enters from right (col 13, row 6), column goes LEFT
-    homeColumnPositions[PlayerColor.yellow] = {
-      for (int i = 0; i < 6; i++)
-        i: _tileCentre(6, 12 - i),  // row 6, cols 12→7
-    };
+  // Yellow: enters from right edge row 7, moves LEFT into center
+  homeColumnPositions[PlayerColor.yellow] = {
+    for (int i = 0; i < 6; i++) i: _tileCentre(7, 13 - i), // cols 13→8
+  };
 
-    // Blue: enters from top (row 1, col 6), column goes DOWN
-    homeColumnPositions[PlayerColor.blue] = {
-      for (int i = 0; i < 6; i++)
-        i: _tileCentre(2 + i, 6),   // col 6, rows 2→7
-    };
-  }
+  // Blue: enters from bottom edge col 7, moves UP into center
+  homeColumnPositions[PlayerColor.blue] = {
+    for (int i = 0; i < 6; i++) i: _tileCentre(13 - i, 7), // rows 13→8
+  };
+}
 
   // -------------------------------------------------------
   // Home areas (the coloured quadrants where pawns start)
@@ -184,9 +188,18 @@ class BoardComponent extends PositionComponent with HasGameRef<LudoGame> {
     }
 
     // Finished — centre of the board
-    if (logicalPos == LudoLogic.finishedPosition) {
-      return Vector2(boardSize / 2, boardSize / 2);
-    }
+    // Finished — placed inside their respective center triangle quadrant
+if (logicalPos == LudoLogic.finishedPosition) {
+  final centerOffset = boardSize / 2;
+  final variance = tileSize * 0.7; // Push visually inside the triangle bounds
+  
+  switch (color) {
+    case PlayerColor.red:    return Vector2(centerOffset - variance, centerOffset);
+    case PlayerColor.green:  return Vector2(centerOffset, centerOffset - variance);
+    case PlayerColor.yellow: return Vector2(centerOffset + variance, centerOffset);
+    case PlayerColor.blue:   return Vector2(centerOffset, centerOffset + variance);
+  }
+}
 
     // On the shared track
     final sharedIdx = LudoLogic.sharedTile(color, logicalPos);
