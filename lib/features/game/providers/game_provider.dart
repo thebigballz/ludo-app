@@ -1,3 +1,5 @@
+import 'dart:math';
+
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../data/models/game_room_model.dart';
 import '../data/repositories/game_repository.dart';
@@ -75,24 +77,23 @@ class GameNotifier extends StateNotifier<GameActionState> {
   GameNotifier(this._repository, this._userId, this._roomId)
       : super(const GameActionState());
 
-  /// Requests a server-generated dice result.
-  ///
-  /// The client no longer calls Random() or writes dice_roll directly.
-  /// The Firebase Cloud Function is responsible for generating and publishing
-  /// the authoritative result.
   Future<void> rollDice(List<LudoPlayer> players) async {
     if (state.isRolling) return;
 
     state = state.copyWith(isRolling: true);
-    try {
-      await _repository.requestDiceRoll(_roomId);
-    } catch (e) {
-      state = state.copyWith(
-        isRolling: false,
-        error: 'Unable to request dice roll.',
-      );
-      rethrow;
+
+    final roll = Random().nextInt(6) + 1;
+    await _repository.setDiceRoll(_roomId, roll);
+
+    final currentPlayer =
+    players.firstWhere((p) => p.userId == _userId);
+    final validMoves = LudoLogic.validMoves(currentPlayer, roll);
+
+    if (validMoves.isEmpty) {
+      await _doSkipTurn(players);
     }
+
+    state = state.copyWith(isRolling: false, lastRoll: roll);
   }
 
   Future<void> _doSkipTurn(List<LudoPlayer> players) async {
@@ -164,12 +165,18 @@ class GameNotifier extends StateNotifier<GameActionState> {
       );
     }
 
-    // Move history is now server-owned. This call remains here temporarily
-    // for the Phase 2 transition, but the current Firebase rules reject it.
+    await _repository.recordMove(
+      _roomId,
+      _userId,
+      diceRoll,
+      pawnToMove.id,
+      from,
+      pawnToMove.position,
+    );
 
     final winner = LudoLogic.checkWinner(allPlayers);
     if (winner != null) {
-      // Winner publication will also become server-authoritative in Phase 2.
+      await _repository.setWinner(_roomId, winner.userId);
       state = state.copyWith(isMoving: false);
       return;
     }
