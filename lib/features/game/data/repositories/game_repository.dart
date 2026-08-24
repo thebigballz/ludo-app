@@ -7,10 +7,6 @@ class GameRepository {
   DatabaseReference _roomRef(String roomId) =>
       _db.ref('games/$roomId');
 
-  // -------------------------------------------------------
-  // Streams
-  // -------------------------------------------------------
-
   Stream<GameRoomModel?> watchRoom(String roomId) {
     return _roomRef(roomId).onValue.map((event) {
       if (!event.snapshot.exists) return null;
@@ -54,21 +50,14 @@ class GameRepository {
     });
   }
 
-  // -------------------------------------------------------
-  // Writes
-  // -------------------------------------------------------
-
-  /// Requests a server-generated dice roll.
-  ///
-  /// The client deliberately does not generate or write the dice value.
-  /// Firebase rules only allow the player whose turn it is to create this
-  /// request, while the Cloud Function writes the authoritative result.
-  Future<void> requestDiceRoll(String roomId) async {
-    await _roomRef(roomId).child('state/roll_request').set(true);
+  Future<void> setDiceRoll(String roomId, int roll) async {
+    await _roomRef(roomId).child('state').update({
+      'dice_roll': roll,
+      'phase': 'moving',
+      'roll_request': false,
+    });
   }
 
-  /// Kept private to prevent callers from treating a client-generated dice
-  /// value as authoritative. Dice results must come from the server.
   Future<void> clearDiceRoll(String roomId) async {
     await _roomRef(roomId).child('state').update({
       'dice_roll': null,
