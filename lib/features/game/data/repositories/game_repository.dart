@@ -58,20 +58,21 @@ class GameRepository {
   // Writes
   // -------------------------------------------------------
 
-  Future<void> setDiceRoll(String roomId, int roll) async {
-    await _roomRef(roomId).child('state').update({
-      'dice_roll':    roll,
-      'phase':        'moving',
-      'roll_request': false,
-    });
+  /// Requests a server-generated dice roll.
+  ///
+  /// The client deliberately does not generate or write the dice value.
+  /// Firebase rules only allow the player whose turn it is to create this
+  /// request, while the Cloud Function writes the authoritative result.
+  Future<void> requestDiceRoll(String roomId) async {
+    await _roomRef(roomId).child('state/roll_request').set(true);
   }
 
-  // FIX: new method — atomically resets dice_roll to null and
-  // sets phase back to 'rolling' so no listener sees a stale roll.
+  /// Kept private to prevent callers from treating a client-generated dice
+  /// value as authoritative. Dice results must come from the server.
   Future<void> clearDiceRoll(String roomId) async {
     await _roomRef(roomId).child('state').update({
       'dice_roll': null,
-      'phase':     'rolling',
+      'phase': 'rolling',
     });
   }
 
@@ -95,11 +96,11 @@ class GameRepository {
       int to,
       ) async {
     await _roomRef(roomId).child('moves').push().set({
-      'user_id':   userId,
+      'user_id': userId,
       'dice_roll': diceRoll,
-      'pawn':      pawnId,
-      'from':      from,
-      'to':        to,
+      'pawn': pawnId,
+      'from': from,
+      'to': to,
       'timestamp': ServerValue.timestamp,
     });
   }
@@ -107,15 +108,13 @@ class GameRepository {
   Future<void> advanceTurn(String roomId, int nextUserId) async {
     await _roomRef(roomId).child('state').update({
       'current_turn': 'user_$nextUserId',
-      // FIX: do NOT set phase or dice_roll here — clearDiceRoll handles
-      // that as a separate step so callers can control the ordering.
     });
   }
 
   Future<void> setWinner(String roomId, int userId) async {
     await _roomRef(roomId).update({
-      'meta/status':  'finished',
-      'state/phase':  'finished',
+      'meta/status': 'finished',
+      'state/phase': 'finished',
       'state/winner': 'user_$userId',
     });
   }
@@ -127,7 +126,7 @@ class GameRepository {
       ) async {
     await _roomRef(roomId).child('players/user_$userId').update({
       'is_connected': connected,
-      'last_seen':    ServerValue.timestamp,
+      'last_seen': ServerValue.timestamp,
     });
   }
 }
