@@ -1,0 +1,102 @@
+{
+  "rules": {
+    "games": {
+      "$roomId": {
+        ".read": "auth != null && root.child('games').child($roomId).child('players').child('user_' + auth.uid).exists()",
+        ".write": false,
+
+        "meta": {
+          ".read": "auth != null && root.child('games').child($roomId).child('players').child('user_' + auth.uid).exists()",
+          ".write": false
+        },
+
+        "state": {
+          ".read": "auth != null && root.child('games').child($roomId).child('players').child('user_' + auth.uid).exists()",
+          ".write": false,
+
+          "roll_request": {
+            ".write": "auth != null && root.child('games').child($roomId).child('players').child('user_' + auth.uid).exists() && root.child('games').child($roomId).child('state').child('current_turn').val() === ('user_' + auth.uid) && root.child('games').child($roomId).child('state').child('phase').val() === 'rolling'",
+            ".validate": "newData.exists() && newData.val() === true"
+          },
+
+          "dice_roll": {
+            ".write": false
+          },
+
+          "current_turn": {
+            ".write": false
+          },
+
+          "winner": {
+            ".write": false
+          },
+
+          "phase": {
+            ".write": false
+          },
+
+          "roll_history": {
+            ".write": false
+          }
+        },
+
+        "players": {
+          ".read": "auth != null && root.child('games').child($roomId).child('players').child('user_' + auth.uid).exists()",
+          ".write": false,
+
+          "$userId": {
+            ".write": false,
+
+            "is_connected": {
+              ".write": "auth != null && $userId === ('user_' + auth.uid) && root.child('games').child($roomId).child('players').child($userId).exists()",
+              ".validate": "newData.isBoolean()"
+            },
+
+            "last_seen": {
+              ".write": "auth != null && $userId === ('user_' + auth.uid) && root.child('games').child($roomId).child('players').child($userId).exists()",
+              ".validate": "newData.isNumber()"
+            },
+
+            "is_ready": {
+              ".write": "auth != null && $userId === ('user_' + auth.uid) && root.child('games').child($roomId).child('players').child($userId).exists()",
+              ".validate": "newData.isBoolean()"
+            }
+          }
+        },
+
+        "pawns": {
+          ".read": "auth != null && root.child('games').child($roomId).child('players').child('user_' + auth.uid).exists()",
+
+          "$userId": {
+            ".write": "auth != null && $userId === ('user_' + auth.uid) && root.child('games').child($roomId).child('players').child($userId).exists() && root.child('games').child($roomId).child('state').child('current_turn').val() === ('user_' + auth.uid)"
+          }
+        },
+
+        "moves": {
+          ".read": "auth != null && root.child('games').child($roomId).child('players').child('user_' + auth.uid).exists()",
+          ".write": false
+        },
+
+        "chat": {
+          ".read": "auth != null && root.child('games').child($roomId).child('players').child('user_' + auth.uid).exists()",
+          ".write": "auth != null && root.child('games').child($roomId).child('players').child('user_' + auth.uid).exists()",
+
+          "$messageId": {
+            ".write": "auth != null && root.child('games').child($roomId).child('players').child('user_' + auth.uid).exists() && (!data.exists() || data.child('user_id').val() === auth.uid)",
+            ".validate": "newData.hasChildren(['user_id', 'name', 'message', 'timestamp']) && newData.child('user_id').val() === auth.uid && newData.child('name').isString() && newData.child('message').isString() && newData.child('message').val().length <= 200 && newData.child('timestamp').isNumber()"
+          }
+        }
+      }
+    },
+
+    "failed_results": {
+      ".read": false,
+      ".write": false
+    },
+
+    "$other": {
+      ".read": false,
+      ".write": false
+    }
+  }
+}
