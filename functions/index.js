@@ -25,35 +25,38 @@ exports.rollDice = onCall(async (request) => {
 
   const uid = request.auth.uid;
   const playerId = `user_${uid}`;
-  const stateRef = db.ref(`games/${roomId}/state`);
-  const playerRef = db.ref(`games/${roomId}/players/${playerId}`);
-
-  const [stateSnapshot, playerSnapshot] = await Promise.all([
-    stateRef.once('value'),
-    playerRef.once('value'),
-  ]);
+  const roomRef = db.ref(`games/${roomId}`);
+  const playerSnapshot = await roomRef.child(`players/${playerId}`).once('value');
 
   if (!playerSnapshot.exists()) {
     throw new HttpsError('permission-denied', 'You are not a player in this game.');
   }
 
-  const state = stateSnapshot.val() || {};
+  const stateRef = roomRef.child('state');
+  let requestedRoll = null;
 
-  if (state.phase !== 'rolling') {
-    throw new HttpsError('failed-precondition', 'The game is not accepting a dice roll.');
-  }
+  const result = await stateRef.transaction((state) => {
+    if (!state || state.phase !== 'rolling' || state.current_turn !== playerId) {
+      return;
+    }
 
-  if (state.current_turn !== playerId) {
-    throw new HttpsError('failed-precondition', 'It is not your turn.');
-  }
+    const diceRoll = Math.floor(Math.random() * 6) + 1;
+    requestedRoll = diceRoll;
 
-  const diceRoll = Math.floor(Math.random() * 6) + 1;
-
-  await stateRef.update({
-    dice_roll: diceRoll,
-    phase: 'moving',
-    roll_request: null,
+    return {
+      ...state,
+      dice_roll: diceRoll,
+      phase: 'moving',
+      roll_request: null,
+    };
   });
 
-  return { diceRoll };
+  if (!result.committed || requestedRoll === null) {
+    throw new HttpsError(
+      'failed-precondition',
+      'The game is not accepting a dice roll for your turn.'
+    );
+  }
+
+  return { diceRoll: requestedRoll };
 });
