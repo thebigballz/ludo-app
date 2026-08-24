@@ -1,8 +1,10 @@
+import 'package:cloud_functions/cloud_functions.dart';
 import 'package:firebase_database/firebase_database.dart';
 import '../models/game_room_model.dart';
 
 class GameRepository {
   final FirebaseDatabase _db = FirebaseDatabase.instance;
+  final FirebaseFunctions _functions = FirebaseFunctions.instance;
 
   DatabaseReference _roomRef(String roomId) =>
       _db.ref('games/$roomId');
@@ -50,6 +52,23 @@ class GameRepository {
     });
   }
 
+  /// Requests a dice roll from the authoritative Firebase Function.
+  /// The client never supplies the dice value.
+  Future<int> requestDiceRoll(String roomId) async {
+    final callable = _functions.httpsCallable('rollDice');
+    final result = await callable.call(<String, dynamic>{
+      'roomId': roomId,
+    });
+
+    final data = result.data;
+    if (data is! Map || data['diceRoll'] is! int) {
+      throw StateError('Invalid dice-roll response from server.');
+    }
+
+    return data['diceRoll'] as int;
+  }
+
+  @Deprecated('Use requestDiceRoll(). Direct state writes will be removed in Phase 2.')
   Future<void> setDiceRoll(String roomId, int roll) async {
     await _roomRef(roomId).child('state').update({
       'dice_roll': roll,
@@ -58,6 +77,7 @@ class GameRepository {
     });
   }
 
+  @Deprecated('State transitions will become server-authoritative in Phase 2.')
   Future<void> clearDiceRoll(String roomId) async {
     await _roomRef(roomId).child('state').update({
       'dice_roll': null,
@@ -65,6 +85,7 @@ class GameRepository {
     });
   }
 
+  @Deprecated('Pawn validation will move to the authoritative server in Phase 2.')
   Future<void> movePawn(
       String roomId,
       int userId,
@@ -76,6 +97,7 @@ class GameRepository {
         .set(newPosition);
   }
 
+  @Deprecated('Move recording will move to the authoritative server in Phase 2.')
   Future<void> recordMove(
       String roomId,
       int userId,
@@ -94,12 +116,14 @@ class GameRepository {
     });
   }
 
+  @Deprecated('Turn advancement will become server-authoritative in Phase 2.')
   Future<void> advanceTurn(String roomId, int nextUserId) async {
     await _roomRef(roomId).child('state').update({
       'current_turn': 'user_$nextUserId',
     });
   }
 
+  @Deprecated('Winner declaration will become server-authoritative in Phase 2.')
   Future<void> setWinner(String roomId, int userId) async {
     await _roomRef(roomId).update({
       'meta/status': 'finished',
