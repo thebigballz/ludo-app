@@ -54,6 +54,12 @@ class GameRepository {
     });
   }
 
+  Future<int?> getGameId(String roomId) async {
+    final snapshot = await _roomRef(roomId).child('meta/game_id').get();
+    final value = snapshot.value;
+    return value is int ? value : int.tryParse(value?.toString() ?? '');
+  }
+
   /// Ask the Laravel API to generate the authoritative dice roll.
   Future<int> requestDiceRoll(int gameId) async {
     final response = await _dio.post(Endpoints.rollDice(gameId));
