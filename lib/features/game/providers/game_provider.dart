@@ -1,5 +1,3 @@
-import 'dart:math';
-
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../data/models/game_room_model.dart';
 import '../data/repositories/game_repository.dart';
@@ -77,130 +75,61 @@ class GameNotifier extends StateNotifier<GameActionState> {
   GameNotifier(this._repository, this._userId, this._roomId)
       : super(const GameActionState());
 
-  Future<void> rollDice(List<LudoPlayer> players) async {
-    if (state.isRolling) return;
+  Future<void> rollDice(int gameId) async {
+    if (state.isRolling || state.isSkipping || state.isMoving) return;
 
-    state = state.copyWith(isRolling: true);
+    state = state.copyWith(isRolling: true, error: null);
 
-    final roll = Random().nextInt(6) + 1;
-    await _repository.setDiceRoll(_roomId, roll);
-
-    final currentPlayer =
-    players.firstWhere((p) => p.userId == _userId);
-    final validMoves = LudoLogic.validMoves(currentPlayer, roll);
-
-    if (validMoves.isEmpty) {
-      await _doSkipTurn(players);
+    try {
+      final roll = await _repository.requestDiceRoll(gameId);
+      state = state.copyWith(
+        isRolling: false,
+        lastRoll: roll,
+      );
+    } catch (e) {
+      state = state.copyWith(
+        isRolling: false,
+        error: _messageFromError(e),
+      );
     }
-
-    state = state.copyWith(isRolling: false, lastRoll: roll);
   }
 
-  Future<void> _doSkipTurn(List<LudoPlayer> players) async {
-    final currentIndex = players.indexWhere((p) => p.userId == _userId);
-    if (currentIndex < 0) return;
-
-    final nextIndex = LudoLogic.nextPlayerIndex(
-      currentIndex,
-      players.length,
-      false,
-    );
-
-    await _repository.advanceTurn(_roomId, players[nextIndex].userId);
-    await _repository.clearDiceRoll(_roomId);
-  }
-
-  Future<void> skipTurnIfNeeded(List<LudoPlayer> players) async {
+  Future<void> skipTurnIfNeeded(int gameId) async {
     if (state.isSkipping || state.isRolling || state.isMoving) return;
 
-    state = state.copyWith(isSkipping: true);
+    state = state.copyWith(isSkipping: true, error: null);
     try {
-      await _doSkipTurn(players);
+      await _repository.skipTurn(gameId);
+    } catch (e) {
+      state = state.copyWith(error: _messageFromError(e));
     } finally {
       state = state.copyWith(isSkipping: false);
     }
   }
 
-  Future<void> movePawn(
-      Pawn pawn,
-      int diceRoll,
-      List<LudoPlayer> allPlayers,
-      ) async {
-    if (state.isMoving) return;
+  Future<void> movePawn(int gameId, Pawn pawn) async {
+    if (state.isMoving || state.isRolling || state.isSkipping) return;
 
-    state = state.copyWith(isMoving: true);
-
-    final currentPlayer =
-    allPlayers.firstWhere((p) => p.userId == _userId);
-    final pawnToMove =
-    currentPlayer.pawns.firstWhere((p) => p.id == pawn.id);
-    final from = pawnToMove.position;
-
-    final captured = LudoLogic.applyMove(
-      currentPlayer,
-      pawnToMove,
-      diceRoll,
-      allPlayers,
-    );
-
-    await _repository.movePawn(
-      _roomId,
-      _userId,
-      pawnToMove.id,
-      pawnToMove.position,
-    );
-
-    for (final capturedPawn in captured) {
-      final owner = allPlayers.firstWhere(
-            (p) => p.pawns.any(
-              (cp) =>
-          cp.id == capturedPawn.id && cp.color == capturedPawn.color,
-        ),
-      );
-      await _repository.movePawn(
-        _roomId,
-        owner.userId,
-        capturedPawn.id,
-        -1,
-      );
-    }
-
-    await _repository.recordMove(
-      _roomId,
-      _userId,
-      diceRoll,
-      pawnToMove.id,
-      from,
-      pawnToMove.position,
-    );
-
-    final winner = LudoLogic.checkWinner(allPlayers);
-    if (winner != null) {
-      await _repository.setWinner(_roomId, winner.userId);
+    state = state.copyWith(isMoving: true, error: null);
+    try {
+      final pawnIndex = int.parse(pawn.id.replaceFirst('p', '')) - 1;
+      await _repository.movePawn(gameId, pawnIndex);
+    } catch (e) {
+      state = state.copyWith(error: _messageFromError(e));
+    } finally {
       state = state.copyWith(isMoving: false);
-      return;
     }
-
-    final extraTurn = LudoLogic.getsExtraTurn(diceRoll, captured);
-    final currentIndex =
-    allPlayers.indexWhere((p) => p.userId == _userId);
-    final nextIndex = LudoLogic.nextPlayerIndex(
-      currentIndex,
-      allPlayers.length,
-      extraTurn,
-    );
-
-    await _repository.advanceTurn(_roomId, allPlayers[nextIndex].userId);
-    await _repository.clearDiceRoll(_roomId);
-
-    state = state.copyWith(
-      isMoving: false,
-      rollHistory: extraTurn ? state.rollHistory : [],
-    );
   }
 
   Future<void> setConnected(bool connected) async {
     await _repository.setPlayerConnected(_roomId, _userId, connected);
+  }
+
+  String _messageFromError(Object error) {
+    final message = error.toString();
+    return message.startsWith('DioException')
+        ? 'The server rejected the action. Please try again.'
+        : message;
   }
 }
 
