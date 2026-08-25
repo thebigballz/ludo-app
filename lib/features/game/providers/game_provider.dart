@@ -75,12 +75,19 @@ class GameNotifier extends StateNotifier<GameActionState> {
   GameNotifier(this._repository, this._userId, this._roomId)
       : super(const GameActionState());
 
-  Future<void> rollDice(int gameId) async {
+  Future<int?> _gameId() => _repository.getGameId(_roomId);
+
+  Future<void> rollDice(List<LudoPlayer> players) async {
     if (state.isRolling || state.isSkipping || state.isMoving) return;
 
     state = state.copyWith(isRolling: true, error: null);
 
     try {
+      final gameId = await _gameId();
+      if (gameId == null) {
+        throw StateError('Game ID is unavailable.');
+      }
+
       final roll = await _repository.requestDiceRoll(gameId);
       state = state.copyWith(
         isRolling: false,
@@ -94,11 +101,15 @@ class GameNotifier extends StateNotifier<GameActionState> {
     }
   }
 
-  Future<void> skipTurnIfNeeded(int gameId) async {
+  Future<void> skipTurnIfNeeded(List<LudoPlayer> players) async {
     if (state.isSkipping || state.isRolling || state.isMoving) return;
 
     state = state.copyWith(isSkipping: true, error: null);
     try {
+      final gameId = await _gameId();
+      if (gameId == null) {
+        throw StateError('Game ID is unavailable.');
+      }
       await _repository.skipTurn(gameId);
     } catch (e) {
       state = state.copyWith(error: _messageFromError(e));
@@ -107,11 +118,20 @@ class GameNotifier extends StateNotifier<GameActionState> {
     }
   }
 
-  Future<void> movePawn(int gameId, Pawn pawn) async {
+  Future<void> movePawn(
+      Pawn pawn,
+      int diceRoll,
+      List<LudoPlayer> allPlayers,
+      ) async {
     if (state.isMoving || state.isRolling || state.isSkipping) return;
 
     state = state.copyWith(isMoving: true, error: null);
     try {
+      final gameId = await _gameId();
+      if (gameId == null) {
+        throw StateError('Game ID is unavailable.');
+      }
+
       final pawnIndex = int.parse(pawn.id.replaceFirst('p', '')) - 1;
       await _repository.movePawn(gameId, pawnIndex);
     } catch (e) {
