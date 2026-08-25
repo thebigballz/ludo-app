@@ -1,10 +1,12 @@
-import 'package:cloud_functions/cloud_functions.dart';
+import 'package:dio/dio.dart';
 import 'package:firebase_database/firebase_database.dart';
+import '../../../../core/network/api_client.dart';
+import '../../../../core/network/endpoints.dart';
 import '../models/game_room_model.dart';
 
 class GameRepository {
   final FirebaseDatabase _db = FirebaseDatabase.instance;
-  final FirebaseFunctions _functions = FirebaseFunctions.instance;
+  final Dio _dio = ApiClient.instance;
 
   DatabaseReference _roomRef(String roomId) =>
       _db.ref('games/$roomId');
@@ -52,84 +54,29 @@ class GameRepository {
     });
   }
 
-  /// Requests a dice roll from the authoritative Firebase Function.
-  /// The client never supplies the dice value.
-  Future<int> requestDiceRoll(String roomId) async {
-    final callable = _functions.httpsCallable('rollDice');
-    final result = await callable.call(<String, dynamic>{
-      'roomId': roomId,
-    });
+  /// Ask the Laravel API to generate the authoritative dice roll.
+  Future<int> requestDiceRoll(int gameId) async {
+    final response = await _dio.post(Endpoints.rollDice(gameId));
+    final data = response.data;
 
-    final data = result.data;
-    if (data is! Map || data['diceRoll'] is! int) {
+    if (data is! Map || data['dice_roll'] is! int) {
       throw StateError('Invalid dice-roll response from server.');
     }
 
-    return data['diceRoll'] as int;
+    return data['dice_roll'] as int;
   }
 
-  @Deprecated('Use requestDiceRoll(). Direct state writes will be removed in Phase 2.')
-  Future<void> setDiceRoll(String roomId, int roll) async {
-    await _roomRef(roomId).child('state').update({
-      'dice_roll': roll,
-      'phase': 'moving',
-      'roll_request': false,
-    });
+  /// Ask the Laravel API to validate and apply a pawn move.
+  Future<void> movePawn(int gameId, int pawnIndex) async {
+    await _dio.post(
+      Endpoints.movePawn(gameId),
+      data: {'pawn_index': pawnIndex},
+    );
   }
 
-  @Deprecated('State transitions will become server-authoritative in Phase 2.')
-  Future<void> clearDiceRoll(String roomId) async {
-    await _roomRef(roomId).child('state').update({
-      'dice_roll': null,
-      'phase': 'rolling',
-    });
-  }
-
-  @Deprecated('Pawn validation will move to the authoritative server in Phase 2.')
-  Future<void> movePawn(
-      String roomId,
-      int userId,
-      String pawnId,
-      int newPosition,
-      ) async {
-    await _roomRef(roomId)
-        .child('pawns/user_$userId/$pawnId')
-        .set(newPosition);
-  }
-
-  @Deprecated('Move recording will move to the authoritative server in Phase 2.')
-  Future<void> recordMove(
-      String roomId,
-      int userId,
-      int diceRoll,
-      String pawnId,
-      int from,
-      int to,
-      ) async {
-    await _roomRef(roomId).child('moves').push().set({
-      'user_id': userId,
-      'dice_roll': diceRoll,
-      'pawn': pawnId,
-      'from': from,
-      'to': to,
-      'timestamp': ServerValue.timestamp,
-    });
-  }
-
-  @Deprecated('Turn advancement will become server-authoritative in Phase 2.')
-  Future<void> advanceTurn(String roomId, int nextUserId) async {
-    await _roomRef(roomId).child('state').update({
-      'current_turn': 'user_$nextUserId',
-    });
-  }
-
-  @Deprecated('Winner declaration will become server-authoritative in Phase 2.')
-  Future<void> setWinner(String roomId, int userId) async {
-    await _roomRef(roomId).update({
-      'meta/status': 'finished',
-      'state/phase': 'finished',
-      'state/winner': 'user_$userId',
-    });
+  /// Ask the Laravel API to advance the turn when no legal pawn move exists.
+  Future<void> skipTurn(int gameId) async {
+    await _dio.post(Endpoints.skipTurn(gameId));
   }
 
   Future<void> setPlayerConnected(
