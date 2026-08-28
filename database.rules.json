@@ -48,17 +48,17 @@
             ".write": false,
 
             "is_connected": {
-              ".write": "auth != null && $userId === ('user_' + auth.uid) && root.child('games').child($roomId).child('players').child($userId).exists()",
+              ".write": "auth != null && $userId.replace('user_', '') === auth.uid && root.child('games').child($roomId).child('players').child($userId).exists()",
               ".validate": "newData.isBoolean()"
             },
 
             "last_seen": {
-              ".write": "auth != null && $userId === ('user_' + auth.uid) && root.child('games').child($roomId).child('players').child($userId).exists()",
+              ".write": "auth != null && $userId.replace('user_', '') === auth.uid && root.child('games').child($roomId).child('players').child($userId).exists()",
               ".validate": "newData.isNumber()"
             },
 
             "is_ready": {
-              ".write": "auth != null && $userId === ('user_' + auth.uid) && root.child('games').child($roomId).child('players').child($userId).exists()",
+              ".write": "auth != null && $userId.replace('user_', '') === auth.uid && root.child('games').child($roomId).child('players').child($userId).exists()",
               ".validate": "newData.isBoolean()"
             }
           }
@@ -68,7 +68,7 @@
           ".read": "auth != null && root.child('games').child($roomId).child('players').child('user_' + auth.uid).exists()",
 
           "$userId": {
-            ".write": "auth != null && $userId === ('user_' + auth.uid) && root.child('games').child($roomId).child('players').child($userId).exists() && root.child('games').child($roomId).child('state').child('current_turn').val() === ('user_' + auth.uid)"
+            ".write": "auth != null && $userId.replace('user_', '') === auth.uid && root.child('games').child($roomId).child('players').child($userId).exists() && root.child('games').child($roomId).child('state').child('current_turn').val() === ('user_' + auth.uid)"
           }
         },
 
